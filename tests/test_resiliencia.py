@@ -71,7 +71,7 @@ def test_chamar_com_resiliencia_retenta_e_sucesso():
 
 
 def test_chamar_com_resiliencia_5xx_considera_falha():
-    circuito = CircuitBreaker("teste", limite_falhas=100)
+    circuito = CircuitBreaker("teste", limite_falhas=2)
 
     def http_erro_interno(url, timeout=None, **kwargs):
         return Resposta(500)
@@ -83,3 +83,4 @@ def test_chamar_com_resiliencia_5xx_considera_falha():
         assert False, "deveria ter falhado"
     except requests.HTTPError:
         pass
+    assert circuito.estado == "aberto"

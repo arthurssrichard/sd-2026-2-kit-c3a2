@@ -41,6 +41,7 @@ class CircuitBreaker:
         self._estado = "fechado"
         self._falhas_consecutivas = 0
         self._aberto_em: Optional[float] = None
+        self._geracao = 0
 
     @property
     def estado(self) -> str:
@@ -49,37 +50,41 @@ class CircuitBreaker:
                 self._estado == "aberto"
                 and (time.monotonic() - self._aberto_em) >= self.tempo_aberto_s
             ):
-                self._estado = "meio_aberto"
+                return "meio_aberto"
             return self._estado
 
-    def _registrar_sucesso(self) -> None:
+    def _finalizar(self, geracao: int, falhou: bool) -> None:
         with self._lock:
-            self._estado = "fechado"
-            self._falhas_consecutivas = 0
-            self._aberto_em = None
-
-    def _registrar_falha(self) -> None:
-        with self._lock:
+            if geracao != self._geracao:
+                return
+            if not falhou:
+                self._estado = "fechado"
+                self._falhas_consecutivas = 0
+                self._aberto_em = None
+                return
             self._falhas_consecutivas += 1
             if (
                 self._estado == "meio_aberto"
                 or self._falhas_consecutivas >= self.limite_falhas
             ):
                 self._estado = "aberto"
+                self._geracao += 1
                 self._aberto_em = time.monotonic()
 
     def executar(self, acao: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Executa `acao` sob o controle do circuito."""
-        if self.estado == "aberto":
-            raise ErroCircuitBreakerAberto(
-                f"{self.nome}: circuito aberto, chamada recusada"
-            )
+        with self._lock:
+            if self._estado == "aberto" and time.monotonic() - self._aberto_em >= self.tempo_aberto_s:
+                self._estado = "meio_aberto"
+            elif self._estado != "fechado":
+                raise ErroCircuitBreakerAberto(f"{self.nome}: chamada recusada")
+            geracao = self._geracao
         try:
             resultado = acao(*args, **kwargs)
         except Exception:
-            self._registrar_falha()
+            self._finalizar(geracao, falhou=True)
             raise
-        self._registrar_sucesso()
+        self._finalizar(geracao, falhou=False)
         return resultado
 
 
@@ -102,20 +107,21 @@ def chamar_com_resiliencia(
       em testes para zerar a espera.
     """
     if esperas is None:
-        esperas = [0.3 * (2 ** i) for i in range(tentativas)]
-    ultima_erro: Optional[Exception] = None
+        esperas = [0.0] + [0.3 * (2 ** i) for i in range(tentativas - 1)]
+    if tentativas < 1 or len(esperas) != tentativas:
+        raise ValueError("Informe uma espera para cada tentativa")
+
+    def requisitar():
+        resposta = funcao_http(url, timeout=timeout_s, **kwargs)
+        if resposta.status_code >= 500:
+            raise requests.HTTPError(f"status {resposta.status_code}", response=resposta)
+        return resposta
+
     for indice, espera in enumerate(esperas):
         if indice > 0:
             time.sleep(espera * (0.5 + random.random() / 2))
         try:
-            resposta = circuito.executar(funcao_http, url, timeout=timeout_s, **kwargs)
-            if resposta.status_code >= 500:
-                raise requests.HTTPError(
-                    f"status {resposta.status_code}", response=resposta
-                )
-            return resposta
-        except ErroCircuitBreakerAberto:
-            raise
-        except requests.RequestException as erro:
-            ultima_erro = erro
-    raise ultima_erro  # todas as tentativas falharam
+            return circuito.executar(requisitar)
+        except requests.RequestException:
+            if indice == tentativas - 1:
+                raise

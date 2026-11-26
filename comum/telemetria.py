@@ -14,7 +14,6 @@ import os
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.redis import RedisInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -26,7 +25,7 @@ def configurar(nome_servico: str, app=None) -> trace.Tracer:
 
     - cria um TracerProvider com o nome do serviço (aparece no Jaeger);
     - exporta os spans via OTLP/HTTP para o coletor (Jaeger no compose);
-    - instrumenta automaticamente `requests` e `redis` (spans de rede);
+    - instrumenta HTTP; publicação e consumo da fila têm spans manuais;
     - se `app` (FastAPI) for passado, instrumenta o servidor HTTP.
     Devolve um tracer para spans manuais.
     """
@@ -41,11 +40,7 @@ def configurar(nome_servico: str, app=None) -> trace.Tracer:
 
     trace.set_tracer_provider(provedor)
 
-    # Instrumentação automática de bibliotecas: cada chamada HTTP saída
-    # (requests) e cada comando Redis (fila) vira um span filho, sem código
-    # extra nos pontos de chamada.
     RequestsInstrumentor().instrument()
-    RedisInstrumentor().instrument()
     if app is not None:
         FastAPIInstrumentor.instrument_app(app)
 
