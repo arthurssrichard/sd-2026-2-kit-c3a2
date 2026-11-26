@@ -1,0 +1,24 @@
+# Prometheus coleta as métricas de cada serviço (/metrics, FastAPI Instrumentator).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["gateway:8000"]
+
+  - job_name: inferencia
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["inferencia:8001"]
+
+  - job_name: worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["worker:8002"]
+
+  - job_name: autoescalador
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["autoescalador:8000"]
