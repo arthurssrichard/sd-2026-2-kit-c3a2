@@ -1,0 +1,69 @@
+# CI/CD da plataforma (extensão do edital): a cada commit, testes de fumaça
+# rodam em contêiner; em push na main, as imagens são publicadas no GHCR.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Testes unitários (resiliência e segurança)
+        run: |
+          pip install pytest requests pyjwt
+          pytest -q
+
+      - name: Sobe o sistema INTEIRO com UM comando
+        run: docker compose up -d --build
+
+      - name: Espera o gateway ficar saudável
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/saude > /dev/null; then
+              echo "gateway saudável"; exit 0
+            fi
+            sleep 2
+          done
+          echo "gateway não subiu a tempo"
+          docker compose logs --tail=100
+          exit 1
+
+      - name: Teste de fumaça (fluxo completo gateway->fila->worker->vetorial)
+        run: python scripts/fumaca.py
+
+      - name: Logs em caso de falha
+        if: failure()
+        run: docker compose logs --tail=200
+
+  publicar:
+    needs: testes
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e publicação das imagens (um Dockerfile por serviço)
+        run: |
+          for SVC in gateway inferencia worker autoescalador; do
+            docker build -f $SVC/Dockerfile \
+              -t ghcr.io/${{ github.repository_owner }}/$SVC:${{ github.sha }} \
+              -t ghcr.io/${{ github.repository_owner }}/$SVC:latest .
+            docker push ghcr.io/${{ github.repository_owner }}/$SVC:${{ github.sha }}
+            docker push ghcr.io/${{ github.repository_owner }}/$SVC:latest
+          done
