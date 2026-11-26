@@ -1,0 +1,35 @@
+# Serviço de inferência (modelo treinado no build da imagem)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inferencia
+  namespace: plataforma
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: inferencia}}
+  template:
+    metadata:
+      labels: {app: inferencia}
+    spec:
+      containers:
+        - name: inferencia
+          image: ghcr.io/SEU_USUARIO/inferencia:latest   # publicado pelo CI (GHCR)
+          ports: [{containerPort: 8001}]
+          env:
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://jaeger:4318
+          readinessProbe:
+            httpGet: {path: /saude, port: 8001}
+            initialDelaySeconds: 5
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inferencia
+  namespace: plataforma
+spec:
+  selector: {app: inferencia}
+  ports: [{port: 8001, targetPort: 8001}]

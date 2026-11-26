@@ -1,0 +1,27 @@
+# KEDA — autoescalonamento de workers CONFORME O TAMANHO DA FILA
+# (extensão do edital). Instale o KEDA antes:
+#   helm repo add kedacore https://kedacore.github.io/charts
+#   helm install keda kedacore/keda --namespace keda --create-namespace
+#
+# O ScaledObject abaixo escala o Deployment 'worker' entre 1 e 10 réplicas
+# conforme o comprimento da lista 'fila:tarefas' no Redis (10 tarefas
+# pendentes por worker). Mesma lógica do autoescalador de compose.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-por-fila
+  namespace: plataforma
+spec:
+  scaleTargetRef:
+    name: worker
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  pollingInterval: 15
+  cooldownPeriod: 60
+  triggers:
+    - type: redis
+      metadata:
+        address: redis.plataforma.svc.cluster.local:6379
+        listName: "fila:tarefas"
+        queueLength: "10"
+        enableTLS: "false"
