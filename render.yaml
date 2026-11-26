@@ -1,0 +1,87 @@
+# ============================================================================
+# Blueprint do Render — deploy da plataforma em free tier (item 5 do edital)
+#
+# 1. Faça o fork do repositório no GitHub
+# 2. No Render: New + -> Blueprint -> escolha o SEU repositório
+# 3. O Render lê este arquivo e cria os serviços web abaixo
+# 4. Depois, complete em cada serviço as variáveis marcadas `sync: false`
+#    (REDIS_URL do Upstash/Render, URLs dos serviços criados)
+# 5. HTTPS é fornecido automaticamente (https://<nome>.onrender.com)
+#
+# Observação honesta de free tier: instâncias gratuitas "adormecem" após
+# ~15 min de inatividade (cold start de ~50s no próximo acesso) e o disco é
+# efêmero (os vetores do Qdrant se perdem em redeploy — ver docs/TRADE-OFFS.md).
+# ============================================================================
+
+services:
+  - type: web
+    name: plataforma-gateway
+    runtime: docker
+    dockerfilePath: ./gateway/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /saude
+    envVars:
+      - key: JWT_SEGREDO
+        generateValue: true
+      - key: JWT_EXPIRA_MINUTOS
+        value: "120"
+      - key: USUARIOS
+        sync: false   # ex.: aluno:senhaForte1,maria:senhaForte2
+      - key: LIMITE_POR_MINUTO
+        value: "30"
+      - key: REDIS_URL
+        sync: false   # cole a URL do Upstash (rediss://...) ou do Render Key Value
+      - key: URL_INFERENCIA
+        value: https://plataforma-inferencia.onrender.com   # ajuste para a URL real criada
+      - key: QDRANT_URL
+        value: https://plataforma-vetorial.onrender.com      # ajuste para a URL real criada
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: https://plataforma-jaeger.onrender.com        # ajuste (opcional)
+
+  - type: web
+    name: plataforma-inferencia
+    runtime: docker
+    dockerfilePath: ./inferencia/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /saude
+    envVars:
+      - key: LLM_API_KEY
+        sync: false   # opcional; sem chave, explicação em modo simulado
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: https://plataforma-jaeger.onrender.com        # ajuste (opcional)
+
+  - type: web
+    name: plataforma-worker
+    runtime: docker
+    dockerfilePath: ./worker/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /saude
+    envVars:
+      - key: REDIS_URL
+        sync: false   # mesma URL do Redis do gateway
+      - key: URL_INFERENCIA
+        value: https://plataforma-inferencia.onrender.com   # ajuste
+      - key: QDRANT_URL
+        value: https://plataforma-vetorial.onrender.com     # ajuste
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: https://plataforma-jaeger.onrender.com       # ajuste (opcional)
+
+  - type: web
+    name: plataforma-vetorial
+    runtime: image
+    image:
+      url: docker.io/qdrant/qdrant:v1.11.0
+    plan: free
+
+  - type: web
+    name: plataforma-jaeger
+    runtime: image
+    image:
+      url: docker.io/jaegertracing/all-in-one:1.57
+    plan: free
+    envVars:
+      - key: COLLECTOR_OTLP_ENABLED
+        value: "true"
