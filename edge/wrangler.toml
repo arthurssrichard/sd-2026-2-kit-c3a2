@@ -1,0 +1,7 @@
+name = "plataforma-ia-borda"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+[vars]
+# URL pública do gateway (Render/Fly/Railway)
+GATEWAY_URL = "https://SEU-GATEWAY.onrender.com"
