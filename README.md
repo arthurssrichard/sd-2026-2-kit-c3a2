@@ -1,261 +1,84 @@
 # Plataforma de IA como Serviço — C3.A2
 
-**Projeto integrador cloud-native · Sistemas Distribuídos e Computação em Nuvem · FAESA 2026/2**
-Prof. M.Sc. Howard Cruz Roatti · Entrega: 26/11/2026
+Projeto integrador de Sistemas Distribuídos e Computação em Nuvem · Prof. Howard Cruz Roatti.
 
-> Sistema distribuído completo: microsserviços conteinerizados, orquestrados
-> por docker-compose, publicados na nuvem, observáveis (rastreamento
-> distribuído) e protegidos (JWT + rate limit + HTTPS). O modelo de IA é a
-> carga de trabalho — a nota vem da engenharia distribuída.
+- **Equipe:** [preencher com os três nomes]
+- **URL pública HTTPS:** [preencher após validar o deploy]
+- **Contato do grupo:** [preencher com e-mail autorizado pela equipe]
 
-**Equipe:** [PREENCHER: nome 1], [PREENCHER: nome 2], [PREENCHER: nome 3]
+Baseada no [kit C3.A2 do professor](https://github.com/howardroatti/sd-2026-2-kit-c3a2). A inferência de demonstração usa scikit-learn e um corpus sintético em português. O artefato é gerado no build; o serviço roda sem GPU, chave ou API de IA externa.
 
-**URL pública (HTTPS):** [PREENCHER após o deploy — ex.: https://plataforma-gateway.onrender.com]
+## Arquitetura
 
----
-
-## 1. Arquitetura
-
-```
-                        ┌─────────────────── JAEGER (rastreamento) ───────────────────┐
-                        │      um ÚNICO trace atravessa toda a plataforma             ▼
- cliente ──HTTPS──► ┌────────────┐  síncrono (timeout·retry·CB)  ┌────────────┐   HTTP  ┌────────────┐
-                    │  GATEWAY   │──────────────────────────────►│ INFERÊNCIA │◄────────│   WORKER   │
-                    │ JWT·rate·CB│                               │modelo local│         │ fila+vetor │
-                    └─────┬──────┘                               └────────────┘         └─────┬──────┘
-                          │ assíncrono: enfileira (LPUSH)                                    │ grava resultado (TTL)
-                          ▼                                                                  ▼
-                   ┌──────────────┐   BRPOP (worker consome)                          ┌────────────┐
-                   │    REDIS     │──────────────────────────────────────────────────►│   QDRANT   │
-                   │ fila+estado  │                                                   │  vetorial  │
-                   └──────────────┘                                                   └────────────┘
-          PROMETHEUS (métricas) ──► GRAFANA (painel) · AUTOESCALADOR (fila) · EDGE (borda, opcional)
+```mermaid
+flowchart LR
+    C[Cliente] -->|HTTPS no deploy| G[Gateway: JWT e rate limit]
+    G -->|Classificar ou vetorizar| I[Inferência]
+    G -->|Publicar tarefa e ler estado| R[(Redis)]
+    R -->|Consumir tarefa| W[Worker]
+    W -->|Atualizar estado| R
+    W -->|Classificar e vetorizar| I
+    W -->|Indexar vetor| Q[(Qdrant)]
+    G -->|Buscar vetores do usuário| Q
+    G -. OTLP .-> J[Jaeger]
+    W -. OTLP .-> J
+    I -. OTLP .-> J
 ```
 
-| Serviço          | Papel                                                    | Porta (host)          |
-|------------------|----------------------------------------------------------|-----------------------|
-| `gateway`        | Porta de entrada ÚNICA: JWT, rate limit, resiliência     | 8000                  |
-| `inferencia`     | IA como biblioteca: modelo scikit-learn local (offline)  | interna (8001)        |
-| `worker`         | Consome a fila; grava resultado (Redis) e vetor (Qdrant) | interna (8002)        |
-| `qdrant`         | **Armazenamento vetorial** — memória semântica           | 6333                  |
-| `redis`          | Fila + rate limit + resultados com TTL                   | 6379                  |
-| `jaeger`         | Rastreamento distribuído (UI)                            | 16686                 |
-| `prometheus`     | Coleta de métricas                                       | 9090                  |
-| `grafana`        | Painel de métricas (admin/admin)                         | 3000                  |
-| `autoescalador`  | Recomenda réplicas conforme o tamanho da fila            | 8003                  |
+- **`POST /predict`** faz inferência síncrona. Se o serviço falhar, retorna `202` com uma tarefa na fila, desde que o Redis esteja disponível.
+- **`POST /tarefas`** retorna `202` e o caminho de consulta. Em **`GET /tarefas/{id}`**, `202` significa pendente, `200` contém `concluido` ou `falhou`, e `404` indica tarefa inexistente, expirada ou de outro usuário.
+- **`POST /memoria/busca`** recebe `{"texto":"consulta","k":3}` e busca vetores de tarefas concluídas do próprio usuário.
 
-Dois caminhos de processamento (decisão de arquitetura chave):
+## Executar do zero
 
-- **Síncrono `/predict`** — baixa latência; protegido por timeout + retentativa
-  + circuit breaker; se a inferência está fora, a tarefa **cai na fila** e o
-  cliente recebe `202` (degradação graciosa, sem erro).
-- **Assíncrono `/tarefas`** — enfileira e devolve `202` + id; o worker processa
-  e `GET /tarefas/{id}` devolve o resultado quando pronto.
-
-## 2. Como executar do zero (UM comando)
-
-Pré-requisito: **Docker** (Docker Desktop ou Engine). Não precisa de GPU,
-internet após o pull das imagens, nem chave de API.
+Na raiz de um clone, com Docker Engine/Desktop e o plugin Compose:
 
 ```bash
-# 1. Clone o repositório
-git clone https://github.com/SEU-USUARIO/SEU-REPO.git
-cd SEU-REPO
-
-# 2. Configure o ambiente
-cp .env.example .env          # edite JWT_SEGREDO e USUARIOS em produção
-
-# 3. Suba o sistema INTEIRO com UM comando
-docker compose up --build -d
-
-# 4. Teste o fluxo completo (gateway -> fila -> worker -> vetorial)
-python scripts/fumaca.py
+docker compose up --build --wait
+python3 scripts/fumaca.py
 ```
 
-Primeiro acesso pelo **gateway** (nunca pelos serviços diretamente):
+O build inicial baixa imagens e dependências. O gateway fica em <http://localhost:8000>, com Swagger em [/docs](http://localhost:8000/docs). O teste de fumaça usa `aluno:aluno123` no modo local e verifica autenticação, classificação, fila, resultado e o vetor da tarefa. Para ajustar configurações locais, copie `.env.example` para `.env`. As credenciais locais são apenas para testes.
+
+Exemplo no terminal (requer `curl` e `python3`):
 
 ```bash
-# Login emite o JWT
-curl -s -X POST http://localhost:8000/login \
-  -H "Content-Type: application/json" \
-  -d '{"usuario":"aluno","senha":"aluno123"}'
-# -> {"token":"eyJ...","tipo":"Bearer","expira_em":"..."}
+TOKEN=$(curl -fsS http://localhost:8000/login \
+  -H 'Content-Type: application/json' \
+  -d '{"usuario":"aluno","senha":"aluno123"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
 
-TOKEN="cole-o-token-aqui"
-
-# Classificação síncrona
-curl -s -X POST http://localhost:8000/predict \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+curl -fsS http://localhost:8000/predict \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"texto":"o atendimento foi excelente"}'
-# -> {"rotulo":"positivo","confianca":0.98,"tempo_ms":12.4,"modelo":"1.0.0","explicacao":"..."}
-
-# Fluxo assíncrono (fila + worker)
-curl -s -X POST http://localhost:8000/tarefas \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"texto":"o produto chegou quebrado"}'
-# -> {"status":"enfileirado","id":"<uuid>","consultar":"/tarefas/<uuid>"}
-curl -s http://localhost:8000/tarefas/<uuid> -H "Authorization: Bearer $TOKEN"
-
-# Busca semântica na memória vetorial
-curl -s "http://localhost:8000/memoria/busca?q=atendimento%20excelente&k=3" \
-  -H "Authorization: Bearer $TOKEN"
 ```
 
-Sem token: `401`. Excedendo 30 req/min: `429` com `Retry-After`.
+## Resiliência e rastreamento
 
-## 3. Resiliência e tratamento de falhas (item 6)
+- Gateway e worker usam timeout de 2 s por chamada de inferência, até três tentativas e backoff exponencial com jitter. Cada processo abre seu circuito após três falhas consecutivas durante 10 s; depois permite uma única tentativa de sondagem. Redis e Qdrant também têm timeouts.
+- O worker reentrega falhas com espera progressiva, até três reentregas por padrão. Uma tarefa concluída tem o vetor gravado antes de o resultado ser marcado como pronto.
+- Para demonstrar o fallback, obtenha um JWT, rode `docker compose stop inferencia`, chame `/predict` e observe o `202`. Rode `docker compose start inferencia` e consulte a tarefa. Reinicie a inferência antes de esgotar as reentregas.
+- No [Jaeger](http://localhost:16686), selecione `gateway` e a operação `fila.publicar`. Abra um trace do teste de fumaça: o cabeçalho W3C da fila liga a publicação ao span `worker.processar_tarefa` e às chamadas de inferência do worker.
+- [Prometheus](http://localhost:9090) e [Grafana](http://localhost:3000) são locais. O recomendador informa a escala; no Compose, escalar o worker é manual (`docker compose up -d --scale worker=2`).
 
-Implementado em `comum/resiliencia.py` (reutilizado por todos os serviços):
+## Segurança e LGPD
 
-| Mecanismo            | Onde                | Comportamento                                              |
-|----------------------|---------------------|------------------------------------------------------------|
-| **Tempo-limite**     | toda chamada HTTP   | 5–10 s por chamada; nenhuma chamada fica sem limite         |
-| **Retentativa**      | gateway e worker    | 3 tentativas com espera exponencial (0,3→0,6→1,2 s) + jitter|
-| **Circuit breaker**  | dependências remotas| 3 falhas seguidas → **aberto** 10 s (recusa imediata) → meio-aberto (1 teste) → fechado |
-| **Fallback para fila**| gateway `/predict` | inferência fora do ar? enfileira e devolve `202`            |
-| **Reentrega limitada**| worker             | tarefa que falha volta à fila até 3 vezes, senão é descartada com log |
-| **Healthchecks**     | compose             | `depends_on` com condição de saúde dos contêineres          |
+O gateway valida JWT com expiração, limita requisições por conta e limita tentativas de login por IP. No deploy documentado, Caddy termina HTTPS e só encaminha tráfego ao gateway. Redis, Qdrant e inferência não têm portas no host. Painéis e métricas são para operação local. As configurações e segredos de deploy ficam fora do Git; use somente textos fictícios na demonstração.
 
-Como demonstrar (roteiro de teste):
+| Dados tratados | Finalidade | Retenção |
+|---|---|---|
+| Nome de usuário e senha | Autenticar contas de demonstração | Até a remoção da configuração; o token expira em 120 minutos por padrão. |
+| Indicadores derivados de conta/IP | Aplicar rate limit | Até 70 s no Redis. |
+| Texto e consulta | Classificar, vetorizar e buscar | Requisições síncronas são processadas em memória. O texto de tarefa é removido no término ou expira no Redis após 1 h por padrão. |
+| Identificador, conta, resultado e vetor | Consultar a tarefa e localizar resultados semelhantes | 1 h a partir da criação por padrão; a busca exclui vetores expirados imediatamente. O worker tenta removê-los do Qdrant a cada minuto enquanto estiver operacional. A expiração lógica não implica eliminação física imediata do disco. |
+| Rotas, tempos, códigos HTTP e ID técnico de tarefa | Diagnóstico e rastreamento | Jaeger usa memória; logs têm rotação no Compose. |
 
-```bash
-docker compose stop inferencia
-# 1ª–3ª chamadas de /predict: retentativas (latência sobe)
-# a partir da 3ª falha: circuito ABRE → respostas 202 INSTANTÂNEAS (fila)
-docker compose start inferencia
-# ~10 s depois o circuito MEIO-ABRE, testa, volta a FECHAR
-```
+Os textos não são enviados a provedores de IA, usados em treinamento ou incluídos intencionalmente nos logs. Solicitações sobre dados podem ser enviadas ao contato do grupo indicado acima.
 
-## 4. Observabilidade (item 7)
+## Deploy e entrega
 
-- **Rastreamento distribuído (Jaeger — <http://localhost:16686>):** o gateway
-  injeta o contexto W3C `traceparent` na mensagem da fila e o worker o extrai:
-  **um único trace** cobre gateway → fila (Redis) → worker → inferência/Qdrant.
-- **Métricas (Prometheus — <http://localhost:9090>):** latência por rota,
-  taxa de requisições, erros 5xx de cada serviço, tamanho da fila, tarefas
-  processadas e escala recomendada.
-- **Painel (Grafana — <http://localhost:3000>**, admin/admin): dashboards
-  provisionados automaticamente em `observabilidade/grafana/`.
+Veja [publicação HTTPS e colaboração no GitHub](deploy/INSTRUCOES.md), o [relatório de CAP, custo e latência](docs/TRADE-OFFS.md) e o [checklist de entrega](docs/STATUS.md).
 
-## 5. Segurança e conformidade (LGPD) — item 6
+O núcleo está em `gateway/`, `inferencia/`, `worker/` e `comum/`. O Compose usa imagens oficiais para Redis, Qdrant e observabilidade. Os exemplos opcionais em `k8s/` e `edge/` não são necessários para o deploy. A automação em `.github/workflows/ci.yml` testa em containers e pode publicar imagens no GHCR; publicar imagens não cria a URL da aplicação.
 
-### Medidas técnicas
-
-- **Autenticação JWT** no gateway: `/login` emite token HS256 com expiração
-  (`JWT_EXPIRA_MINUTOS`); todas as rotas de negócio exigem `Authorization:
-  Bearer` (401 caso contrário). Comparação de senha em tempo constante
-  (`hmac.compare_digest`); rate limit também no login (força bruta).
-- **Rate limit** por cliente por minuto (janela no Redis — válido mesmo com
-  várias réplicas do gateway).
-- **HTTPS** no serviço publicado: fornecido pela plataforma de deploy
-  (`https://...onrender.com`); componente opcional na borda (`edge/`).
-- **Logs sem dados pessoais:** os logs registram apenas método, rota, status
-  e duração — **nunca o conteúdo dos textos**.
-- **Minimização:** entradas limitadas a 2000 caracteres; identificadores
-  pseudônimos (UUID) em lugar de dados pessoais.
-- **Toda configuração em variáveis de ambiente** (`​.env.example`) — nada
-  fixo no código; segredos não versionados (`.env` fora do git).
-
-### Declaração LGPD (dados tratados)
-
-| Pergunta                             | Resposta |
-|--------------------------------------|----------|
-| **Quais dados são tratados?**        | (1) Textos enviados voluntariamente em `/predict`, `/tarefas` e `/memoria/busca`; (2) nome de usuário informado no `/login`; (3) identificadores técnicos (id de tarefa em UUID, timestamps). Nenhum dado pessoal sensível é solicitado. |
-| **Com qual finalidade?**             | Prover o serviço de classificação de sentimento e a memória semântica da plataforma; fins estritamente educacionais (avaliação acadêmica). |
-| **Base legal**                       | Execução de serviço solicitado pelo titular (envio voluntário) — LGPD art. 7º, V; ambiente de teste educacional. |
-| **Por quanto tempo (retenção)?**     | Resultados de tarefas: 1 hora (TTL do Redis) ou até o reinício do contêiner; fila: apagada após o processamento; memória vetorial: efêmera no free tier (reinício/redeploy apaga) e limitada ao conteúdo processado no local; logs de acesso: apenas enquanto o contêiner vive. |
-| **Compartilhamento?**                | Nenhum dado é vendido ou compartilhado. Sem LLM_API_KEY configurada, **nada é enviado a serviços externos** (modo simulado offline). Com chave configurada, o texto enviável a uma API externa é o mínimo necessário para gerar a explicação. |
-| **Uso para treinamento de modelos?** | Não. Nenhum modelo é treinado com dados dos usuários. |
-| **Direitos do titular**              | Acesso, correção e eliminação sob demanda (art. 18): basta contatar a equipe abaixo; a eliminação imediata consiste em `docker compose down -v` (ambientes de teste). |
-| **Encarregado (DPO) de contato**     | [PREENCHER: e-mail do grupo] |
-
-## 6. Deploy público (item 5) — free tier
-
-Instruções completas em **`deploy/INSTRUCOES.md`** (Render Blueprint com o
-`render.yaml` deste repositório, ou Railway/Fly como alternativa).
-
-**URL pública:** [PREENCHER — ex.: https://plataforma-gateway.onrender.com]
-
-Nota de free tier: instâncias gratuitas adormecem após ~15 min de inatividade
-(cold start ~50 s no próximo acesso) e o disco é efêmero — implicações
-discutidas em `docs/TRADE-OFFS.md`.
-
-## 7. Relatório de trade-offs (CAP · custo · latência)
-
-Documento completo: **`docs/TRADE-OFFS.md`**. Resumo:
-
-- **CAP** — escolha AP no fluxo assíncrono (aceita trabalho mesmo com falhas;
-  consistência eventual via fila); gosto de CP no caminho síncrono
-  (timeout/retry/CB, falha rápido em vez de travar).
-- **Custo** — R$ 0 (modelo treinado no build; free tier); circuit breaker e
-  rate limit reduzem desperdício de máquinas; autoescalonamento paga só o
-  trabalho necessário.
-- **Latência** — síncrono p95 baixo para interação humana; assíncrono assume
-  fila em picos para NUNCA perder requisição; retentativa exponencial com
-  jitter evita stampede.
-
-## 8. Extensões opcionais (todas implementadas)
-
-| Extensão                    | Onde                                                        |
-|-----------------------------|-------------------------------------------------------------|
-| Autoescalonamento pela fila | `autoescalador/` (compose) + `k8s/keda-scaledobject.yaml`    |
-| Serverless na borda         | `edge/worker.js` (Cloudflare Workers — deploy gratuito)     |
-| CI/CD a cada commit         | `.github/workflows/ci.yml` (testes + fumaça + publicação GHCR)|
-| Painel de métricas          | `observabilidade/grafana/` (provisionado no compose)         |
-| Manifests de Kubernetes     | `k8s/` (com README de aplicação)                             |
-
-## 9. Estrutura do repositório
-
-```
-├── comum/               # biblioteca compartilhada: resiliência, fila, telemetria
-├── gateway/             # API Gateway (JWT, rate limit, rotas)
-├── inferencia/          # serviço de IA (modelo treina no build — offline)
-├── worker/              # worker de fila (resultado + memória vetorial)
-├── autoescalador/       # extensão: escala conforme a fila
-├── edge/                # extensão: serverless na borda (Cloudflare)
-├── k8s/                 # extensão: manifests + KEDA
-├── observabilidade/     # Prometheus + Grafana provisionados
-├── deploy/              # passo a passo do deploy (free tier)
-├── docs/                # trade-offs (CAP/custo/latência) e status das tarefas
-├── scripts/             # teste de fumaça do fluxo completo
-├── tests/               # testes unitários (pytest)
-├── docker-compose.yml   # UM comando sobe tudo
-├── render.yaml          # Blueprint de deploy (Render)
-└── .github/workflows/   # CI/CD
-```
-
-## 10. Referência das variáveis de ambiente
-
-| Variável                  | Serviço            | Padrão                        | Uso |
-|---------------------------|--------------------|-------------------------------|-----|
-| `JWT_SEGREDO`             | gateway            | `troque-este-segredo`         | assinatura do JWT   |
-| `JWT_EXPIRA_MINUTOS`      | gateway            | 120                           | validade do token   |
-| `USUARIOS`                | gateway            | `aluno:aluno123`              | usuários demo       |
-| `LIMITE_POR_MINUTO`       | gateway            | 30                            | rate limit          |
-| `URL_INFERENCIA`          | gateway/worker     | `http://inferencia:8001`      | descoberta de serviço |
-| `REDIS_URL`               | gateway/worker/autoesc. | `redis://redis:6379/0`   | fila/estado         |
-| `QDRANT_URL`              | gateway/worker     | `http://qdrant:6333`          | memória vetorial    |
-| `TAREFA_TTL_SEGUNDOS`     | gateway/worker     | 3600                          | retenção (LGPD)     |
-| `VETOR_DIM`               | inferencia/worker  | 32                            | dimensão do vetor   |
-| `MAX_REENTREGAS`          | worker             | 3                             | reentrega da tarefa |
-| `LLM_API_KEY`             | inferencia         | *(vazio)*                     | sem chave = simulado |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | todos          | `http://jaeger:4318`          | rastreamento        |
-
-## 11. Testes
-
-```bash
-pytest -q                    # testes unitários (resiliência + JWT)
-python scripts/fumaca.py     # teste de fumaça do sistema inteiro (com o stack no ar)
-```
-
-O CI executa ambos a cada commit (`.github/workflows/ci.yml`).
-
----
-
-### Checklist final do edital
-
-Consulte **`docs/STATUS.md`** — mapeia cada tarefa do kit ao arquivo que a
-implementa, incluindo o roteiro "antes de entregar" (clone do zero em outra
-máquina, URL no ar, configuração 100% externa, logs sem dados pessoais).
-
-Licença: MIT (herdada do kit de partida).
+Licença MIT, herdada do kit.

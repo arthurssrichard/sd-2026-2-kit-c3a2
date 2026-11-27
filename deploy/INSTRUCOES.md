@@ -1,57 +1,70 @@
-# Deploy em nuvem (free tier) — item 5 do edital
+# Do repositório-base à entrega
 
-Objetivo: **URL pública com HTTPS** funcionando a partir do repositório do grupo.
-Siga a Opção A (Render); a Opção B (Railway/Fly) fica como alternativa.
+## 1. Publicar a base no GitHub
 
-## Opção A — Render com Blueprint (recomendada, usa o `render.yaml` do repositório)
+1. Entre no GitHub e abra o [kit do professor](https://github.com/howardroatti/sd-2026-2-kit-c3a2). Clique em **Fork → Create fork**. Sugestão de nome: `c3a2-plataforma-ia-base`. Escolha o perfil que vai manter a base.
+2. Na pasta local já revisada, adicione um remoto separado para evitar publicar no kit:
 
-1. **Fork** deste repositório no GitHub (botão Fork no canto superior direito).
-2. Crie conta em <https://render.com> e conecte o GitHub.
-3. Dashboard: **New + → Blueprint** → selecione o SEU fork.
-   O Render lê o `render.yaml` e propõe os serviços: gateway, inferência,
-   worker, vetorial (Qdrant) e jaeger.
-4. Clique **Apply** e aguarde o build (a inferência demora mais: treina no build).
-5. Redis gerenciado:
-   - **Upstash (grátis, recomendado):** crie um banco em <https://upstash.com>,
-     copie a URL TLS (`rediss://...`) e cole em `REDIS_URL` do **gateway** e do
-     **worker** (Environment → Edit).
-   - Alternativa: **Render Key Value** (New + → Key Value) e use a URL interna
-     ou externa no `REDIS_URL`.
-6. Anote as URLs públicas criadas (ex.: `https://plataforma-gateway.onrender.com`)
-   e **corrija** em cada serviço as variáveis `URL_INFERENCIA`, `QDRANT_URL` e
-   `OTEL_EXPORTER_OTLP_ENDPOINT` para as URLs reais.
-7. Reinicie os serviços para aplicar (Environment → qualquer edit pede redeploy).
-8. Teste: `https://SEU-GATEWAY.onrender.com/saude` no navegador → `{"status":"ok"}`.
+   ```bash
+   git remote add base https://github.com/SEU_USUARIO/c3a2-plataforma-ia-base.git
+   git push -u base main
+   ```
 
-**HTTPS:** automático — o Render emite e renova o certificado TLS do domínio
-`*.onrender.com` (atende o item 8 do edital sem configuração extra).
+   Se o repositório-base já existir com outro nome, use a URL dele. O `push` requer acesso autenticado à conta.
 
-**Cold start (atenção):** instâncias gratuitas adormecem após ~15 min sem
-tráfego; o próximo acesso demora ~50s. Para o worker NÃO dormir (fila precisa
-processar), use um ping periódico gratuito (ex.: cron-job.org em
-`https://plataforma-worker.onrender.com/saude` a cada 10 min).
+3. Confira o README e o histórico pelo GitHub. Para compartilhar sem depender de uma conta, a partir da pasta local gere `git bundle create ../c3a2-plataforma-ia-base.bundle main`. O colega pode usar `git clone -b main c3a2-plataforma-ia-base.bundle`; o arquivo contém o histórico e deve ficar fora do repositório.
 
-## Opção B — Railway
+## 2. Criar o repositório final e trabalhar em grupo
 
-1. <https://railway.app> → New Project → Deploy from GitHub repo.
-2. Crie um serviço para cada Dockerfile (raiz do repositório como contexto).
-3. Configure as mesmas variáveis de ambiente.
-4. Settings → Networking → Generate Domain (URL pública com HTTPS).
+1. Em uma **organização ou conta diferente** da que mantém a base, crie um fork da base com nome `c3a2-plataforma-ia`. O GitHub admite um fork da mesma rede por proprietário; a organização do grupo permite ter base e entrega separadas.
+2. Convide os integrantes em **Settings → Collaborators** (ou conceda acesso de escrita pela organização). Cada integrante deve clonar o **mesmo** repositório final:
 
-## Opção C — Fly.io
+   ```bash
+   git clone https://github.com/ORGANIZACAO/c3a2-plataforma-ia.git
+   cd c3a2-plataforma-ia
+   git switch -c melhoria/minha-tarefa
+   # Faça e teste sua alteração.
+   git add CAMINHO_DO_ARQUIVO
+   git commit -m "Descreva a melhoria realizada"
+   git push -u origin HEAD
+   ```
 
-1. `fly launch` em cada serviço (`fly.toml` gerado apontando ao Dockerfile).
-2. URLs públicas `https://<app>.fly.dev` com HTTPS automático.
+3. Abram pull requests para `main`, revisem entre vocês e prefiram **Create a merge commit** se desejam preservar cada commit na branch principal. Antes de começar outra tarefa, façam `git switch main` e `git pull --ff-only`.
+4. Sugestões de contribuições: integrar a inferência ou o worker de trabalhos anteriores do grupo, validar falhas e traces, e realizar o deploy/documentar resultados. Cada pessoa faz commits próprios; não é preciso sobrescrever commits, copiar autores ou usar `push --force`.
 
-## Variáveis mínimas por serviço
+## 3. Publicar em HTTPS
 
-| Serviço    | Variáveis                                                            |
-|------------|----------------------------------------------------------------------|
-| gateway    | `JWT_SEGREDO`, `USUARIOS`, `REDIS_URL`, `URL_INFERENCIA`, `QDRANT_URL`|
-| inferência | (opcional) `LLM_API_KEY`                                             |
-| worker     | `REDIS_URL`, `URL_INFERENCIA`, `QDRANT_URL`                          |
+Requisitos: uma VM Linux com Docker Engine atualizado e Compose v2, IPv4 público e um domínio/subdomínio controlado pela equipe. Exemplo de free tier: **Oracle Cloud Always Free**, se houver capacidade na região. Confira no painel se VM e disco estão elegíveis antes de criar; disponibilidade e limites são do provedor. Pode usar um subdomínio gratuito que permita apontar o DNS para a VM.
 
-## Dica que vale nota
+1. No DNS, crie um registro **A** para o IPv4 público da VM. Remova eventual registro AAAA incorreto. No firewall da nuvem e da VM, libere TCP **80/443** e restrinja SSH ao IP de administração. Não libere as portas internas.
+2. Na VM, clone o **repositório final**. Na raiz dele, configure:
 
-Publique CEDO, ainda que incompleto — deploy sempre dá mais trabalho do que
-se imagina. Anote a URL no README principal (seção "Deploy público").
+   ```bash
+   umask 077
+   cp .env.example .env
+   openssl rand -hex 32
+   ```
+
+   Edite `.env`: informe `DOMINIO` sem `https://` nem barra final (`ia.exemplo.com`), use o valor gerado em `JWT_SEGREDO` e configure `USUARIOS` com contas de teste e senhas fortes (mínimo de 12 caracteres, sem vírgulas). Não publique `.env` nem as senhas no GitHub.
+
+3. Suba a aplicação e o proxy:
+
+   ```bash
+   docker compose -f docker-compose.yml -f compose.publico.yml up -d --build --wait
+   docker compose -f docker-compose.yml -f compose.publico.yml logs --tail=100 caddy
+   ```
+
+   Caddy emite e renova o certificado TLS quando o DNS e a rede estão corretos. Para acessar o Jaeger da VM, use `ssh -L 16686:127.0.0.1:16686 USUARIO@IP_DA_VM`.
+
+4. Valide de outra máquina:
+
+   ```bash
+   curl -fsS https://ia.exemplo.com/saude
+   read -rs -p 'Senha do usuário de teste: ' SENHA; echo
+   BASE=https://ia.exemplo.com USUARIO=avaliador SENHA="$SENHA" python3 scripts/fumaca.py
+   unset SENHA
+   ```
+
+   Configure `avaliador` na VM ou substitua pelo nome escolhido. Além do teste público, faça um clone limpo em outra máquina e rode `docker compose up --build --wait` e `python3 scripts/fumaca.py` com os valores locais.
+
+5. Preencha no `README.md` do repositório final os três nomes, a URL **real** e um contato autorizado. Envie ao professor o acesso de demonstração por um canal privado. Na atividade **C3.A2** do AVA, poste apenas a URL do repositório final. Se o AVA exigir arquivo, envie um documento contendo somente esse link.

@@ -22,6 +22,7 @@ kubectl apply -f k8s/qdrant.yaml
 kubectl apply -f k8s/inferencia.yaml
 kubectl apply -f k8s/worker.yaml
 kubectl apply -f k8s/gateway.yaml
+kubectl -n plataforma port-forward svc/gateway 8000:80
 
 # 4. Autoescalonamento pela fila (opcional — instale o KEDA antes)
 kubectl apply -f k8s/keda-scaledobject.yaml
@@ -35,6 +36,6 @@ kubectl apply -f k8s/keda-scaledobject.yaml
 | `qdrant.yaml`              | armazenamento vetorial                       |
 | `inferencia.yaml`          | serviço de inferência (2 réplicas)           |
 | `worker.yaml`              | worker de fila (1 réplica, escala via KEDA)  |
-| `gateway.yaml`             | porta de entrada pública (LoadBalancer)      |
+| `gateway.yaml`             | gateway interno, acessível via port-forward  |
 | `secret.example.yaml`      | modelo de segredos (JWT e usuários)          |
 | `keda-scaledobject.yaml`   | autoescalador baseado na fila                |
