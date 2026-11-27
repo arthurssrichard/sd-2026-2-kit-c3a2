@@ -21,7 +21,8 @@ export default {
     }
 
     // Primeira barreira de autenticação: sem token, nem chega ao gateway.
-    if (!request.headers.get("authorization")) {
+    if (!(url.pathname === "/login" && request.method === "POST") &&
+        !request.headers.get("authorization")) {
       return new Response(
         JSON.stringify({ erro: "token ausente (verificação na borda)" }),
         { status: 401, headers: { "content-type": "application/json" } }

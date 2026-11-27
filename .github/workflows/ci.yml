@@ -20,7 +20,7 @@ jobs:
       - name: Testes unitários (resiliência e segurança)
         run: |
           pip install pytest requests pyjwt
-          pytest -q
+          python -m pytest -q
 
       - name: Sobe o sistema INTEIRO com UM comando
         run: docker compose up -d --build
@@ -60,10 +60,11 @@ jobs:
 
       - name: Build e publicação das imagens (um Dockerfile por serviço)
         run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
           for SVC in gateway inferencia worker autoescalador; do
             docker build -f $SVC/Dockerfile \
-              -t ghcr.io/${{ github.repository_owner }}/$SVC:${{ github.sha }} \
-              -t ghcr.io/${{ github.repository_owner }}/$SVC:latest .
-            docker push ghcr.io/${{ github.repository_owner }}/$SVC:${{ github.sha }}
-            docker push ghcr.io/${{ github.repository_owner }}/$SVC:latest
+              -t "ghcr.io/$OWNER/$SVC:$GITHUB_SHA" \
+              -t "ghcr.io/$OWNER/$SVC:latest" .
+            docker push "ghcr.io/$OWNER/$SVC:$GITHUB_SHA"
+            docker push "ghcr.io/$OWNER/$SVC:latest"
           done

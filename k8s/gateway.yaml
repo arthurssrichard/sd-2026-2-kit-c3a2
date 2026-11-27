@@ -40,6 +40,6 @@ metadata:
   name: gateway
   namespace: plataforma
 spec:
-  type: LoadBalancer   # em clusters sem LB, troque por NodePort/Ingress
+  type: ClusterIP
   selector: {app: gateway}
   ports: [{port: 80, targetPort: 8000}]

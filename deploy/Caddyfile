@@ -1,0 +1,5 @@
+{$DOMINIO} {
+	@internas path /metrics
+	respond @internas 404
+	reverse_proxy gateway:8000
+}

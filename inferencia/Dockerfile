@@ -14,8 +14,9 @@ COPY comum/ /app/comum/
 COPY inferencia/ /app/inferencia/
 
 # Treino no build: a imagem já sai com o modelo pronto (offline em runtime).
-RUN python /app/inferencia/treino.py
+ARG VETOR_DIM=32
+RUN python -m inferencia.treino
 
 ENV PYTHONPATH=/app
 EXPOSE 8001
-CMD ["uvicorn", "inferencia.app:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "inferencia.app:app", "--host", "0.0.0.0", "--port", "8001", "--no-access-log"]

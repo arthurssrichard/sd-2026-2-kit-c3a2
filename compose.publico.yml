@@ -1,0 +1,22 @@
+services:
+  gateway:
+    environment:
+      AMBIENTE: publico
+      FORWARDED_ALLOW_IPS: "*"
+      JWT_SEGREDO: "${JWT_SEGREDO:?Configure JWT_SEGREDO no .env}"
+      USUARIOS: "${USUARIOS:?Configure USUARIOS no .env}"
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMINIO: "${DOMINIO:?Configure DOMINIO no .env}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificados:/data
+    depends_on:
+      gateway: {condition: service_healthy}
+volumes:
+  certificados:
