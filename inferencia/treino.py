@@ -17,7 +17,7 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 
-from corpus import base_rotulada
+from inferencia.corpus import base_rotulada
 
 CAMINHO_MODELO = Path(__file__).parent / "modelo.joblib"
 VETOR_DIM = int(os.getenv("VETOR_DIM", "32"))
@@ -37,7 +37,9 @@ def treinar() -> dict:
     acuracia_treino = float(classificador.score(matriz, rotulos))
 
     # SVD exige n_components < n_features (e < n_amostras); escolha segura:
-    dim = min(VETOR_DIM, matriz.shape[1] - 1, matriz.shape[0] - 1)
+    dim = VETOR_DIM
+    if not 1 <= dim < min(matriz.shape):
+        raise ValueError("VETOR_DIM incompatível com o corpus de treinamento")
     svd = TruncatedSVD(n_components=dim, random_state=42)
     svd.fit(matriz)
 

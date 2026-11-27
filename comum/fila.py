@@ -1,29 +1,28 @@
 """
 Fila de tarefas no Redis com propagação de contexto de rastreamento.
 
-A mensagem carrega um campo `tracardo` (carrier do padrão W3C tracecontext):
-o gateway injeta o contexto do span corrente ao enfileirar e o worker extrai
-ao consumir — o processamento continua o MESMO trace do requisito original.
-É assim que o trace cobre gateway, fila e worker (item 7 do edital).
-
-Protocolo da fila (LPUSH + BRPOP = FIFO):
-  {"id": "<uuid>", "texto": "...", "criado_em": 1712..., "tentativas": 0,
-   "tracardo": {"traceparent": "..."}}
+A lista FIFO (LPUSH + BRPOP) guarda apenas IDs. A chave temporária da tarefa
+guarda conteúdo, estado e contexto W3C que liga o worker ao trace do gateway.
 """
 import json
+import os
 import time
 import uuid
 
 from opentelemetry import propagate, trace
 
 FILA_PADRAO = "fila:tarefas"
+TAREFA_TTL = int(os.getenv("TAREFA_TTL_SEGUNDOS", "3600"))
+COLECAO = "memoria_v2"
 
 
-def nova_tarefa(texto: str) -> dict:
-    """Cria a mensagem de tarefa (id único; sem dados pessoais)."""
+def nova_tarefa(texto: str, dono: str) -> dict:
+    """Cria uma tarefa pendente, ainda não publicada."""
     return {
         "id": str(uuid.uuid4()),
         "texto": texto,
+        "dono": dono,
+        "status": "pendente",
         "criado_em": round(time.time(), 3),
         "tentativas": 0,
         "tracardo": {},
@@ -33,7 +32,10 @@ def nova_tarefa(texto: str) -> dict:
 def enfileirar(cliente_redis, tarefa: dict, fila: str = FILA_PADRAO) -> None:
     """Publica a tarefa na fila, capturando o contexto de trace atual."""
     propagate.inject(tarefa["tracardo"])
-    cliente_redis.lpush(fila, json.dumps(tarefa))
+    with cliente_redis.pipeline() as pipe:
+        pipe.set(f"tarefa:{tarefa['id']}", json.dumps(tarefa), ex=TAREFA_TTL)
+        pipe.lpush(fila, tarefa["id"])
+        pipe.execute()
 
 
 def desenfileirar(cliente_redis, fila: str = FILA_PADRAO, timeout: int = 2):
@@ -41,8 +43,24 @@ def desenfileirar(cliente_redis, fila: str = FILA_PADRAO, timeout: int = 2):
     item = cliente_redis.brpop(fila, timeout=timeout)
     if item is None:
         return None
-    _, bruto = item
-    return json.loads(bruto)
+    _, tarefa_id = item
+    bruto = cliente_redis.get(f"tarefa:{tarefa_id}")
+    return json.loads(bruto) if bruto else None
+
+
+def atualizar(cliente_redis, tarefa: dict, **campos) -> None:
+    cliente_redis.set(
+        f"tarefa:{tarefa['id']}", json.dumps({**tarefa, **campos}), xx=True, keepttl=True
+    )
+
+
+def filtro_memoria(dono: str) -> dict:
+    return {
+        "must": [
+            {"key": "dono", "match": {"value": dono}},
+            {"key": "expira_em", "range": {"gt": time.time()}},
+        ]
+    }
 
 
 def contexto_da_tarefa(tarefa: dict):

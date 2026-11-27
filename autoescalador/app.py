@@ -23,15 +23,13 @@ from fastapi import FastAPI
 from prometheus_client import Gauge
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from comum.telemetria import configurar
-
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 FILA = os.getenv("FILA_CHAVE", "fila:tarefas")
 LIMIAR_POR_WORKER = int(os.getenv("LIMIAR_FILA_POR_WORKER", "10"))
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "4"))
 INTERVALO_S = float(os.getenv("AUTOESCALADOR_INTERVALO_S", "15"))
 
-db = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+db = redis.Redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=4)
 
 FILA_TAMANHO = Gauge("autoescalador_fila_tamanho", "Tarefas aguardando na fila")
 ESCALA_RECOMENDADA = Gauge(
@@ -39,7 +37,6 @@ ESCALA_RECOMENDADA = Gauge(
 )
 
 app = FastAPI(title="Autoescalador — C3.A2")
-configurar("autoescalador", app)
 Instrumentator().instrument(app).expose(app)
 
 
@@ -73,7 +70,7 @@ def _loop_monitor(evento_parada: threading.Event) -> None:
                 recomendacao_atual = alvo
             ESCALA_RECOMENDADA.set(recomendacao_atual)
         except redis.RedisError as erro:
-            print(f"[autoescalador] redis indisponível: {erro}", flush=True)
+            print(f"[autoescalador] redis indisponível: {type(erro).__name__}", flush=True)
         evento_parada.wait(INTERVALO_S)
 
 

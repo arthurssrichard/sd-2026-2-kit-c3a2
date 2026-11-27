@@ -3,13 +3,12 @@ Serviço de inferência — a "carga de trabalho" da plataforma (IA como
 biblioteca/API, sem treinar modelos: edital, FAQ).
 
 Rotas:
-  /predict  -> rótulo + confiança + tempo + explicação (LLM real ou simulado)
+  /predict  -> rótulo + confiança + tempo
   /vetor    -> vetor denso (LSA) do texto, usado pelo armazenamento vetorial
   /saude    -> healthcheck (compose e plataformas de deploy)
 
 O modelo (modelo.joblib) já vem treinado no BUILD da imagem — ver treino.py.
 """
-import os
 import threading
 import time
 from pathlib import Path
@@ -21,7 +20,6 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, Field
 
 from comum.telemetria import configurar
-from inferencia import llm
 
 CAMINHO_MODELO = Path(__file__).parent / "modelo.joblib"
 
@@ -41,7 +39,7 @@ def _modelo() -> dict:
             if not CAMINHO_MODELO.exists():
                 raise HTTPException(
                     status_code=503,
-                    detail="modelo ausente: rode 'python treino.py' (o Dockerfile faz isso no build)",
+                    detail="modelo ausente: rode 'python -m inferencia.treino'",
                 )
             _pacote = joblib.load(CAMINHO_MODELO)
         return _pacote
@@ -53,6 +51,7 @@ class Entrada(BaseModel):
 
 @app.get("/saude")
 def saude():
+    _modelo()
     return {"status": "ok", "servico": "inferencia"}
 
 
@@ -75,7 +74,6 @@ def predict(entrada: Entrada):
             "confianca": round(confianca, 4),
             "tempo_ms": round(tempo_ms, 2),
             "modelo": pacote["versao"],
-            "explicacao": llm.explicar(entrada.texto, rotulo, confianca),
         }
 
 

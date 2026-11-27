@@ -23,13 +23,15 @@ from datetime import datetime, timedelta, timezone
 import jwt
 import redis
 import requests
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from opentelemetry import trace
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, Field
 
-from comum.fila import FILA_PADRAO, enfileirar, nova_tarefa
+from comum.fila import COLECAO, FILA_PADRAO, enfileirar, filtro_memoria, nova_tarefa
 from comum.resiliencia import (
     CircuitBreaker,
     ErroCircuitBreakerAberto,
@@ -47,7 +49,6 @@ JWT_ALGORITMO = "HS256"
 JWT_EXPIRA_MINUTOS = int(os.getenv("JWT_EXPIRA_MINUTOS", "120"))
 LIMITE_POR_MINUTO = int(os.getenv("LIMITE_POR_MINUTO", "30"))
 FILA = os.getenv("FILA_CHAVE", FILA_PADRAO)
-TAREFA_TTL = int(os.getenv("TAREFA_TTL_SEGUNDOS", "3600"))
 QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
 
 
@@ -66,8 +67,12 @@ def _usuarios_do_ambiente() -> dict[str, str]:
 
 
 USUARIOS = _usuarios_do_ambiente()
+if os.getenv("AMBIENTE") == "publico" and (
+    len(JWT_SEGREDO) < 32 or not USUARIOS or any(len(senha) < 12 for senha in USUARIOS.values())
+):
+    raise RuntimeError("Configure JWT_SEGREDO (32+ caracteres) e senhas (12+ caracteres)")
 
-db = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+db = redis.Redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=4)
 circuito_inferencia = CircuitBreaker(
     "inferencia", limite_falhas=3, tempo_aberto_s=10.0
 )
@@ -86,11 +91,20 @@ async def registrar_requisicao(request: Request, call_next):
     inicio = time.time()
     resposta = await call_next(request)
     ms = (time.time() - inicio) * 1000
-    print(
-        f"[gateway] {request.method} {request.url.path} "
-        f"-> {resposta.status_code} ({ms:.1f}ms)"
-    )
+    rota = request.scope.get("route")
+    print(f"[gateway] {request.method} {getattr(rota, 'path', '?')} "
+          f"-> {resposta.status_code} ({ms:.1f}ms)")
     return resposta
+
+
+@app.exception_handler(RequestValidationError)
+async def entrada_invalida(request: Request, erro: RequestValidationError):
+    return JSONResponse(status_code=422, content={"detail": "entrada inválida"})
+
+
+@app.exception_handler(redis.RedisError)
+async def redis_indisponivel(request: Request, erro: redis.RedisError):
+    return JSONResponse(status_code=503, content={"detail": "estado temporariamente indisponível"})
 
 
 # ---------------------------------------------------------------------------
@@ -118,8 +132,11 @@ def cliente_atual(
         raise HTTPException(status_code=401, detail="token ausente: faça login em /login")
     try:
         carga = jwt.decode(
-            credenciais.credentials, JWT_SEGREDO, algorithms=[JWT_ALGORITMO]
+            credenciais.credentials, JWT_SEGREDO, algorithms=[JWT_ALGORITMO],
+            options={"require": ["sub", "exp", "iat"]},
         )
+        if not isinstance(carga["sub"], str) or carga["sub"] not in USUARIOS:
+            raise jwt.InvalidTokenError()
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="token expirado: refaça o login")
     except jwt.InvalidTokenError:
@@ -130,10 +147,12 @@ def cliente_atual(
 def limite_por_cliente(cliente: str) -> None:
     """TAREFA 2 — janela fixa de 1 minuto no Redis (compartilhada entre réplicas)."""
     janela = int(time.time() // 60)
-    chave = f"rl:{cliente}:{janela}"
-    total = db.incr(chave)
-    if total == 1:
-        db.expire(chave, 70)
+    identificador = hmac.digest(JWT_SEGREDO.encode(), cliente.encode(), "sha256").hex()
+    chave = f"rl:{identificador}:{janela}"
+    with db.pipeline() as pipe:
+        pipe.incr(chave)
+        pipe.expire(chave, 70)
+        total, _ = pipe.execute()
     if total > LIMITE_POR_MINUTO:
         raise HTTPException(
             status_code=429,
@@ -178,10 +197,10 @@ def login(cred: Credenciais, request: Request):
 # ---------------------------------------------------------------------------
 # Caminho SÍNCRONO (baixa latência) com resiliência e fallback para a fila
 # ---------------------------------------------------------------------------
-def _resposta_fila(texto: str, motivo: str) -> JSONResponse:
+def _resposta_fila(texto: str, cliente: str, motivo: str) -> JSONResponse:
     """Enfileira a tarefa e devolve 202 — o sistema degrada em vez de falhar."""
-    with tracer.start_as_current_span("gateway.enfileirar_tarefa") as span:
-        tarefa = nova_tarefa(texto)
+    with tracer.start_as_current_span("fila.publicar", kind=trace.SpanKind.PRODUCER) as span:
+        tarefa = nova_tarefa(texto, cliente)
         try:
             enfileirar(db, tarefa, FILA)
         except redis.RedisError:
@@ -230,51 +249,45 @@ def predict(entrada: Entrada, cliente: str = Depends(cliente_atual)):
                 f"{URL_INFERENCIA}/predict",
                 json=entrada.model_dump(),
                 tentativas=3,
-                timeout_s=10.0,
+                timeout_s=2.0,
             )
+            resposta.raise_for_status()
             return resposta.json()
         except ErroCircuitBreakerAberto:
-            return _resposta_fila(entrada.texto, "circuito aberto (inferência em falha)")
+            return _resposta_fila(entrada.texto, cliente, "circuito aberto")
         except requests.RequestException:
-            return _resposta_fila(entrada.texto, "inferência não respondeu após retentativas")
+            return _resposta_fila(entrada.texto, cliente, "inferência indisponível")
 
 
 @app.post("/tarefas", status_code=202)
 def criar_tarefa(entrada: Entrada, cliente: str = Depends(cliente_atual)):
     """Caminho ASSÍNCRONO explícito: enfileira e devolve onde consultar."""
     limite_por_cliente(cliente)
-    with tracer.start_as_current_span("gateway.criar_tarefa") as span:
-        tarefa = nova_tarefa(entrada.texto)
-        span.set_attribute("texto.tamanho", len(entrada.texto))
-        try:
-            enfileirar(db, tarefa, FILA)
-        except redis.RedisError:
-            raise HTTPException(status_code=503, detail="fila indisponível")
-        span.set_attribute("tarefa.id", tarefa["id"])
-        return {
-            "status": "enfileirado",
-            "id": tarefa["id"],
-            "consultar": f"/tarefas/{tarefa['id']}",
-        }
+    return _resposta_fila(entrada.texto, cliente, "solicitação assíncrona")
 
 
 @app.get("/tarefas/{tarefa_id}")
-def consultar_tarefa(tarefa_id: str, cliente: str = Depends(cliente_atual)):
+def consultar_tarefa(tarefa_id: modulo_uuid.UUID, cliente: str = Depends(cliente_atual)):
     """Resultado da tarefa assíncrona: 202 enquanto pendente, 200 quando pronta."""
-    bruto = db.get(f"resultado:{tarefa_id}")
-    if bruto is None:
+    limite_por_cliente(cliente)
+    bruto = db.get(f"tarefa:{tarefa_id}")
+    tarefa = json.loads(bruto) if bruto else {}
+    if tarefa.get("dono") != cliente:
+        raise HTTPException(status_code=404, detail="tarefa não encontrada")
+    if tarefa["status"] == "pendente":
         return JSONResponse(
-            status_code=202, content={"status": "pendente", "id": tarefa_id}
+            status_code=202, content={"status": "pendente", "id": str(tarefa_id)}
         )
-    resultado = json.loads(bruto)
-    resultado["status"] = "concluido"
-    return resultado
+    return {"status": tarefa["status"], "id": tarefa["id"], **tarefa.get("resultado", {})}
 
 
-@app.get("/memoria/busca")
+class Busca(Entrada):
+    k: int = Field(default=5, ge=1, le=20)
+
+
+@app.post("/memoria/busca")
 def busca_memoria(
-    q: str = Query(min_length=1, max_length=2000),
-    k: int = Query(5, ge=1, le=20),
+    entrada: Busca,
     cliente: str = Depends(cliente_atual),
 ):
     """Busca semântica na memória vetorial: vetoriza a consulta (inferência)
@@ -286,32 +299,32 @@ def busca_memoria(
                 circuito_inferencia,
                 requests.post,
                 f"{URL_INFERENCIA}/vetor",
-                json={"texto": q},
+                json={"texto": entrada.texto},
                 tentativas=2,
-                timeout_s=10.0,
+                timeout_s=2.0,
             )
+            resposta_vetor.raise_for_status()
             vetor = resposta_vetor.json()["vetor"]
         except (ErroCircuitBreakerAberto, requests.RequestException):
             raise HTTPException(status_code=503, detail="serviço de inferência indisponível")
 
         try:
             with tracer.start_as_current_span("gateway.busca_vetorial") as span_q:
-                span_q.set_attribute("k", k)
+                span_q.set_attribute("k", entrada.k)
                 resposta_q = requests.post(
-                    f"{QDRANT_URL}/collections/memoria/points/search",
-                    json={"vector": vetor, "limit": k, "with_payload": True, "with_vector": False},
+                    f"{QDRANT_URL}/collections/{COLECAO}/points/search",
+                    json={"vector": vetor, "limit": entrada.k, "filter": filtro_memoria(cliente),
+                          "with_payload": ["tarefa_id", "rotulo", "confianca"]},
                     timeout=5,
                 )
+                if resposta_q.status_code == 404:
+                    return {"total": 0, "resultados": []}
                 resposta_q.raise_for_status()
                 resultados = [
                     {"pontuacao": ponto["score"], **(ponto.get("payload") or {})}
                     for ponto in resposta_q.json().get("result", [])
                 ]
         except requests.RequestException:
-            return {
-                "total": 0,
-                "resultados": [],
-                "aviso": "armazenamento vetorial indisponível no momento",
-            }
+            raise HTTPException(status_code=503, detail="armazenamento vetorial indisponível")
         span.set_attribute("resultados", len(resultados))
         return {"total": len(resultados), "resultados": resultados}

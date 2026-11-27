@@ -84,6 +84,8 @@ resultado = None
 limite = time.time() + 60
 while time.time() < limite:
     status, corpo = requisicao("GET", f"/tarefas/{id_tarefa}", token=token)
+    if status == 200 and corpo.get("status") == "falhou":
+        passo("5b. tarefa concluída pelo worker", False, "worker registrou falha")
     if status == 200 and corpo.get("status") == "concluido":
         resultado = corpo
         break
@@ -95,10 +97,12 @@ passo(
 )
 
 # 6. Memória vetorial
-status, corpo = requisicao("GET", "/memoria/busca?q=atendimento%20excelente&k=3", token=token)
+status, corpo = requisicao(
+    "POST", "/memoria/busca", {"texto": "o produto chegou quebrado", "k": 20}, token
+)
 passo(
-    "6. /memoria/busca devolveu resultados",
-    status == 200 and isinstance(corpo.get("resultados"), list),
+    "6. /memoria/busca encontrou o vetor da tarefa",
+    status == 200 and any(item.get("tarefa_id") == id_tarefa for item in corpo.get("resultados", [])),
     f"total={corpo.get('total')}",
 )
 
