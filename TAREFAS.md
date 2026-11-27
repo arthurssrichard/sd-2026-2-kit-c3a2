@@ -1,5 +1,8 @@
 # TAREFAS - Trabalho C3.A2 (Plataforma de IA como Servico)
 
+Esta é a lista original do kit. Para verificar o estado da entrega e os
+arquivos correspondentes, consulte [docs/STATUS.md](docs/STATUS.md).
+
 Este e o projeto integrador. Reaproveite o que voce fez em C1.A2 e C2.A2.
 
 ## Nucleo obrigatorio

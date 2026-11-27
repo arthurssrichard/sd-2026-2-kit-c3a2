@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   testes:
@@ -23,28 +22,24 @@ jobs:
           python -m pytest -q
 
       - name: Sobe o sistema INTEIRO com UM comando
-        run: docker compose up -d --build
-
-      - name: Espera o gateway ficar saudável
-        run: |
-          for i in $(seq 1 60); do
-            if curl -fsS http://localhost:8000/saude > /dev/null; then
-              echo "gateway saudável"; exit 0
-            fi
-            sleep 2
-          done
-          echo "gateway não subiu a tempo"
-          docker compose logs --tail=100
-          exit 1
+        run: docker compose up --build --wait --wait-timeout 120
 
       - name: Teste de fumaça (fluxo completo gateway->fila->worker->vetorial)
-        run: python scripts/fumaca.py
+        run: JAEGER_URL=http://localhost:16686 python scripts/fumaca.py
+
+      - name: Confere fallback e abertura do circuito sem inferência
+        run: |
+          docker compose stop inferencia
+          FALHA_INFERENCIA=1 python scripts/fumaca.py
 
       - name: Logs em caso de falha
         if: failure()
         run: docker compose logs --tail=200
 
   publicar:
+    permissions:
+      contents: read
+      packages: write
     needs: testes
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest

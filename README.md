@@ -58,7 +58,7 @@ curl -fsS http://localhost:8000/predict \
 - Gateway e worker usam timeout de 2 s por chamada de inferência, até três tentativas e backoff exponencial com jitter. Cada processo abre seu circuito após três falhas consecutivas durante 10 s; depois permite uma única tentativa de sondagem. Redis e Qdrant também têm timeouts.
 - O worker reentrega falhas com espera progressiva, até três reentregas por padrão. Uma tarefa concluída tem o vetor gravado antes de o resultado ser marcado como pronto.
 - Para demonstrar o fallback, obtenha um JWT, rode `docker compose stop inferencia`, chame `/predict` e observe o `202`. Rode `docker compose start inferencia` e consulte a tarefa. Reinicie a inferência antes de esgotar as reentregas.
-- No [Jaeger](http://localhost:16686), selecione `gateway` e a operação `fila.publicar`. Abra um trace do teste de fumaça: o cabeçalho W3C da fila liga a publicação ao span `worker.processar_tarefa` e às chamadas de inferência do worker.
+- No [Jaeger](http://localhost:16686), selecione `gateway` e a operação `fila.publicar`. Abra um trace do teste de fumaça: o cabeçalho W3C da fila liga a publicação ao span `worker.processar_tarefa` e às chamadas de inferência do worker. Para verificar automaticamente, rode `JAEGER_URL=http://localhost:16686 python3 scripts/fumaca.py`.
 - [Prometheus](http://localhost:9090) e [Grafana](http://localhost:3000) são locais. O recomendador informa a escala; no Compose, escalar o worker é manual (`docker compose up -d --scale worker=2`).
 
 ## Segurança e LGPD
