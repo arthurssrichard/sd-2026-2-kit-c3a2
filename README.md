@@ -2,7 +2,7 @@
 
 Projeto integrador de Sistemas Distribuídos e Computação em Nuvem · Prof. Howard Cruz Roatti.
 
-- **Equipe:** [preencher com os três nomes]
+- **Equipe:** Arthur Salles Soares Richard, Matheus Andrade Rangel e Willian Alves Freitas Foca.
 - **URL pública HTTPS:** <https://ia.arthurssrichard.com/>
 - **Contato do grupo:** [preencher com e-mail autorizado pela equipe]
 
