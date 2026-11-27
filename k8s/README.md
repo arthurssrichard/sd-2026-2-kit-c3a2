@@ -7,7 +7,7 @@ aceita os manifests "mesmo sem executá-los em cluster real".
 ## Como aplicar
 
 ```bash
-# 1. As imagens devem estar publicadas (CI publica em ghcr.io no push na main)
+# 1. As imagens devem estar publicadas (CI publica no push na main se PUBLICAR_GHCR=true)
 #    Edite SEU_USUARIO nos manifests: k8s/inferencia.yaml, worker.yaml, gateway.yaml
 
 # 2. Namespace + segredos

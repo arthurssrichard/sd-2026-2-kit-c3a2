@@ -1,5 +1,5 @@
 # CI/CD da plataforma (extensão do edital): a cada commit, testes de fumaça
-# rodam em contêiner; em push na main, as imagens são publicadas no GHCR.
+# rodam em contêiner; em push na main, a publicação no GHCR é opcional.
 name: CI
 
 on:
@@ -41,7 +41,7 @@ jobs:
       contents: read
       packages: write
     needs: testes
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: vars.PUBLICAR_GHCR == 'true' && github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

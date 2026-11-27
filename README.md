@@ -79,6 +79,6 @@ Os textos não são enviados a provedores de IA, usados em treinamento ou inclu�
 
 Veja [publicação HTTPS e colaboração no GitHub](deploy/INSTRUCOES.md), o [relatório de CAP, custo e latência](docs/TRADE-OFFS.md) e o [checklist de entrega](docs/STATUS.md).
 
-O núcleo está em `gateway/`, `inferencia/`, `worker/` e `comum/`. O Compose usa imagens oficiais para Redis, Qdrant e observabilidade. Os exemplos opcionais em `k8s/` e `edge/` não são necessários para o deploy. A automação em `.github/workflows/ci.yml` testa em containers e pode publicar imagens no GHCR; publicar imagens não cria a URL da aplicação.
+O núcleo está em `gateway/`, `inferencia/`, `worker/` e `comum/`. O Compose usa imagens oficiais para Redis, Qdrant e observabilidade. Os exemplos opcionais em `k8s/` e `edge/` não são necessários para o deploy. A automação em `.github/workflows/ci.yml` testa em containers. Para habilitar a publicação opcional no GHCR, vá em **Settings → Secrets and variables → Actions → Variables** e crie a variável `PUBLICAR_GHCR` com valor `true`. Publicar imagens não cria a URL da aplicação.
 
 Licença MIT, herdada do kit.
