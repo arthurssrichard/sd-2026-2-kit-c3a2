@@ -4,7 +4,7 @@ Projeto integrador de Sistemas Distribuídos e Computação em Nuvem · Prof. Ho
 
 - **Equipe:** Arthur Salles Soares Richard, Matheus Andrade Rangel e Willian Alves Freitas Foca.
 - **URL pública HTTPS:** <https://ia.arthurssrichard.com/>
-- **Contato do grupo:** [preencher com e-mail autorizado pela equipe]
+- **Contatos do grupo:** <arthurssrichard@gmail.com>, <Matheusti.arangel@gmail.com> e <willian.freitas@zohomail.com>.
 
 Baseada no [kit C3.A2 do professor](https://github.com/howardroatti/sd-2026-2-kit-c3a2). A inferência de demonstração usa scikit-learn e um corpus sintético em português. O artefato é gerado no build; o serviço roda sem GPU, chave ou API de IA externa.
 
