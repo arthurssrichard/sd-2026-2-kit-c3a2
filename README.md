@@ -63,7 +63,7 @@ curl -fsS http://localhost:8000/predict \
 
 ## Segurança e LGPD
 
-O gateway valida JWT com expiração, limita requisições por conta e limita tentativas de login por IP. No deploy documentado, Caddy termina HTTPS e só encaminha tráfego ao gateway. Redis, Qdrant e inferência não têm portas no host. Painéis e métricas são para operação local. As configurações e segredos de deploy ficam fora do Git; use somente textos fictícios na demonstração.
+O gateway valida JWT com expiração, limita requisições por conta e limita tentativas de login por IP. A [implantação pública](deploy/INSTRUCOES.md#3-publicar-em-https) usa Traefik como proxy HTTPS; o guia também oferece Caddy para uma VM sem proxy existente. Em ambos os casos, só o gateway recebe tráfego público e a rota `/metrics` fica fora do acesso público. Redis, Qdrant e inferência não têm portas no host. Painéis e métricas são para operação local. O `.env` e os segredos de deploy ficam fora do Git; use somente textos fictícios na demonstração.
 
 | Dados tratados | Finalidade | Retenção |
 |---|---|---|
